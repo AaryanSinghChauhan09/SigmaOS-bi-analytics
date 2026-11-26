@@ -1,8 +1,8 @@
 //! CLI for sigmaos-bi-analytics.
 
 use clap::{Parser, Subcommand};
-use sigmaos_bi_analytics::{compute, load_dashboard, render_widget, run_dashboard, AggFn, Metric};
 use serde_json::Value;
+use sigmaos_bi_analytics::{compute, load_dashboard, render_widget, run_dashboard, AggFn, Metric};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -44,7 +44,12 @@ fn parse_agg(s: &str) -> Result<AggFn, Box<dyn std::error::Error>> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
     match Cli::parse().command {
-        Commands::Metric { dataset, field, agg, group_by } => {
+        Commands::Metric {
+            dataset,
+            field,
+            agg,
+            group_by,
+        } => {
             let text = std::fs::read_to_string(&dataset)?;
             let v: Value = serde_json::from_str(&text)?;
             let records = match v {
@@ -87,11 +92,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut fields = std::collections::BTreeSet::new();
             for r in &records {
                 if let Some(o) = r.as_object() {
-                    for k in o.keys() { fields.insert(k.clone()); }
+                    for k in o.keys() {
+                        fields.insert(k.clone());
+                    }
                 }
             }
             println!("records: {}", records.len());
-            println!("fields: {}", fields.into_iter().collect::<Vec<_>>().join(", "));
+            println!(
+                "fields: {}",
+                fields.into_iter().collect::<Vec<_>>().join(", ")
+            );
         }
     }
     Ok(())

@@ -59,27 +59,30 @@ pub enum MetricResult {
 }
 
 fn num(v: &Value) -> Option<f64> {
-    v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+    v.as_f64()
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
 }
 
 /// Compute a metric over records.
 pub fn compute(records: &[Value], metric: &Metric) -> Result<MetricResult, BiError> {
     let filtered: Vec<&Value> = records
         .iter()
-        .filter(|r| {
-            match (&metric.filter_field, &metric.filter_value) {
-                (Some(f), Some(v)) => {
-                    r.get(f).map(|x| x.to_string() == *v || x.as_str() == Some(v.as_str())).unwrap_or(false)
-                }
-                _ => true,
-            }
+        .filter(|r| match (&metric.filter_field, &metric.filter_value) {
+            (Some(f), Some(v)) => r
+                .get(f)
+                .map(|x| x.to_string() == *v || x.as_str() == Some(v.as_str()))
+                .unwrap_or(false),
+            _ => true,
         })
         .collect();
 
     if let Some(gf) = &metric.group_by {
         let mut groups: BTreeMap<String, Vec<f64>> = BTreeMap::new();
         for r in filtered {
-            let key = r.get(gf).map(|v| v.to_string()).unwrap_or_else(|| "null".into());
+            let key = r
+                .get(gf)
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "null".into());
             let val = r.get(&metric.field).and_then(num);
             groups.entry(key).or_default().push(val.unwrap_or(0.0));
         }
@@ -181,8 +184,8 @@ pub fn save_dashboard(d: &Dashboard, path: &Path) -> Result<(), BiError> {
 }
 
 pub fn load_dashboard(path: &Path) -> Result<Dashboard, BiError> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|_| BiError::NotFound(path.display().to_string()))?;
+    let text =
+        std::fs::read_to_string(path).map_err(|_| BiError::NotFound(path.display().to_string()))?;
     Ok(serde_json::from_str(&text)?)
 }
 
