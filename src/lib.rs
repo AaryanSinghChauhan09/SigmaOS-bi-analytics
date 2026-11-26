@@ -51,7 +51,7 @@ pub struct Metric {
 }
 
 /// Metric result: scalar or grouped.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum MetricResult {
     Scalar(f64),
@@ -88,7 +88,11 @@ pub fn compute(records: &[Value], metric: &Metric) -> Result<MetricResult, BiErr
         for r in filtered {
             let key = r
                 .get(gf)
-                .map(|v| v.to_string())
+                .map(|v| {
+                    v.as_str()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| v.to_string())
+                })
                 .unwrap_or_else(|| "null".into());
             let val = r.get(&metric.field).and_then(num);
             groups.entry(key).or_default().push(val.unwrap_or(0.0));
@@ -200,4 +204,103 @@ pub fn load_dashboard(path: &Path) -> Result<Dashboard, BiError> {
 pub fn default_dashboards_dir() -> Option<PathBuf> {
     directories::ProjectDirs::from("org", "sigmaos", "sigmaos")
         .map(|p| p.config_dir().join("bi-analytics").join("dashboards"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn records() -> Vec<Value> {
+        vec![
+            json!({"region": "us", "sales": 10, "qty": 1}),
+            json!({"region": "us", "sales": 20, "qty": 2}),
+            json!({"region": "eu", "sales": 5, "qty": 3}),
+            json!({"region": "eu", "sales": "7", "qty": 4}),
+        ]
+    }
+
+    fn metric(field: &str, agg: AggFn) -> Metric {
+        Metric {
+            name: "m".into(),
+            field: field.into(),
+            agg,
+            group_by: None,
+            filter_field: None,
+            filter_value: None,
+        }
+    }
+
+    #[test]
+    fn scalar_aggs() {
+        let r = records();
+        assert_eq!(
+            compute(&r, &metric("sales", AggFn::Sum)).unwrap(),
+            MetricResult::Scalar(42.0)
+        );
+        assert_eq!(
+            compute(&r, &metric("sales", AggFn::Avg)).unwrap(),
+            MetricResult::Scalar(10.5)
+        );
+        assert_eq!(
+            compute(&r, &metric("sales", AggFn::Min)).unwrap(),
+            MetricResult::Scalar(5.0)
+        );
+        assert_eq!(
+            compute(&r, &metric("sales", AggFn::Max)).unwrap(),
+            MetricResult::Scalar(20.0)
+        );
+        // numeric strings parse too
+        assert_eq!(
+            compute(&r, &metric("sales", AggFn::Count)).unwrap(),
+            MetricResult::Scalar(4.0)
+        );
+    }
+
+    #[test]
+    fn group_by_sorts_and_aggregates() {
+        let mut m = metric("sales", AggFn::Sum);
+        m.group_by = Some("region".into());
+        let out = compute(&records(), &m).unwrap();
+        let MetricResult::Grouped(map) = out else {
+            panic!("expected grouped")
+        };
+        assert_eq!(map["eu"], 12.0);
+        assert_eq!(map["us"], 30.0);
+    }
+
+    #[test]
+    fn filter_limits_rows() {
+        let mut m = metric("sales", AggFn::Sum);
+        m.filter_field = Some("region".into());
+        m.filter_value = Some("us".into());
+        assert_eq!(compute(&records(), &m).unwrap(), MetricResult::Scalar(30.0));
+    }
+
+    #[test]
+    fn empty_numeric_is_error() {
+        let r = vec![json!({"name": "x"})];
+        assert!(compute(&r, &metric("missing", AggFn::Sum)).is_err());
+    }
+
+    #[test]
+    fn dashboard_roundtrip_and_render() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("sigmaos-bi-test-dash.json");
+        let d = Dashboard {
+            name: "t".into(),
+            dataset: PathBuf::from("data.json"),
+            widgets: vec![Widget {
+                title: "Sales".into(),
+                metric: metric("sales", AggFn::Sum),
+                chart: "number".into(),
+            }],
+        };
+        save_dashboard(&d, &path).unwrap();
+        let back = load_dashboard(&path).unwrap();
+        assert_eq!(back.name, "t");
+        assert_eq!(back.widgets.len(), 1);
+        let _ = std::fs::remove_file(&path);
+        assert!(render_widget("Sales", &MetricResult::Scalar(42.0)).contains("42.00"));
+    }
 }
