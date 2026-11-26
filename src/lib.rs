@@ -65,12 +65,19 @@ fn num(v: &Value) -> Option<f64> {
 
 /// Compute a metric over records.
 pub fn compute(records: &[Value], metric: &Metric) -> Result<MetricResult, BiError> {
+    let filter_value_json = metric
+        .filter_value
+        .as_ref()
+        .and_then(|v| serde_json::from_str::<Value>(v.as_str()).ok());
     let filtered: Vec<&Value> = records
         .iter()
         .filter(|r| match (&metric.filter_field, &metric.filter_value) {
             (Some(f), Some(v)) => r
                 .get(f)
-                .map(|x| x.to_string() == *v || x.as_str() == Some(v.as_str()))
+                .map(|x| {
+                    x.as_str() == Some(v.as_str())
+                        || filter_value_json.as_ref().map(|e| e == x).unwrap_or(false)
+                })
                 .unwrap_or(false),
             _ => true,
         })
